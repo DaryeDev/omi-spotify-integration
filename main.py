@@ -250,6 +250,15 @@ def find_playlist_by_name(uid: str, name: str, onlyModifiableByUser: bool = Fals
     return None
 
 
+def find_playlist_by_id(uid: str, id: str, onlyModifiableByUser: bool = False) -> Optional[SpotifyPlaylist]:
+    """Find a playlist by ID."""
+    playlists = get_user_playlists(uid, limit=50, onlyModifiableByUser=onlyModifiableByUser)
+    for playlist in playlists:
+        if playlist.id == id:
+            return playlist
+    return None
+
+
 # ============================================
 # OAuth Endpoints
 # ============================================
@@ -770,6 +779,52 @@ async def tool_play_song(request: Request):
         return ChatToolResponse(error=f"Failed to play song: {str(e)}")
 
 
+@app.post("/tools/play_playlist", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_play_playlist(request: Request):
+    """
+    Play a specific playlist on Spotify.
+    Chat tool for Omi - finds and plays a playlist.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        playlist_id = body.get("playlist_id", "")
+        
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+        
+        if not playlist_id:
+            return ChatToolResponse(error="Playlist ID is required")
+
+        # Check authentication
+        if not get_spotify_tokens(uid):
+            return ChatToolResponse(error="Please connect your Spotify account first in the app settings.")
+
+        playlist = find_playlist_by_id(uid, playlist_id)
+        if not playlist:
+            return ChatToolResponse(error=f"Could not find playlist: {playlist_id}")
+        
+        # Play the playlist
+        result = spotify_api_request(
+            uid, "PUT", "/me/player/play",
+            json_data={"uris": [f"spotify:playlist:{playlist_id}"]}
+        )
+        
+        if "error" in result:
+            if "No active device" in str(result.get("error", "")):
+                return ChatToolResponse(
+                    error="No active Spotify device found. Please open Spotify on one of your devices first."
+                )
+            return ChatToolResponse(error=f"Failed to play: {result['error']}")
+        
+        return ChatToolResponse(
+            result=f"▶️ Now playing: **{playlist.name}**"
+        )
+    
+    except Exception as e:
+        return ChatToolResponse(error=f"Failed to play playlist: {str(e)}")
+
+
 @app.post("/tools/get_recommendations", tags=["chat_tools"], response_model=ChatToolResponse)
 async def tool_get_recommendations(request: Request):
     """
@@ -977,6 +1032,23 @@ async def get_omi_tools_manifest():
                 },
                 "auth_required": True,
                 "status_message": "Playing song..."
+            },
+            {
+                "name": "play_playlist",
+                "description": "Play a specific playlist on Spotify. Use this when the user wants to play a particular playlist. Get the playlist ID from the get_playlists tool.",
+                "endpoint": "/tools/play_playlist",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "playlist_id": {
+                            "type": "string",
+                            "description": "ID of the playlist to play"
+                        },
+                    },
+                    "required": ["playlist_id"]
+                },
+                "auth_required": True,
+                "status_message": "Playing playlist..."
             },
             {
                 "name": "get_recommendations",
