@@ -209,14 +209,12 @@ def get_user_playlists(uid: str, limit: int = 20, onlyModifiableByUser: bool = F
     if "error" in result:
         return []
 
-    user_profile = None
-    if onlyModifiableByUser:
-        # Get current user's Spotify profile info
-        user_profile = spotify_api_request(uid, "GET", "/me")
+    user_profile = spotify_api_request(uid, "GET", "/me")
     
     playlists = []
     for item in result.get("items", []):
-        if onlyModifiableByUser and (item["owner"]["id"] != user_profile["id"] and item["collaborative"] == False):
+        canEdit = item["owner"]["id"] == user_profile["id"] or item["collaborative"] == True
+        if onlyModifiableByUser and not canEdit:
             continue
 
         playlists.append(SpotifyPlaylist(
@@ -227,6 +225,7 @@ def get_user_playlists(uid: str, limit: int = 20, onlyModifiableByUser: bool = F
             tracks_total=item["tracks"]["total"],
             public=item.get("public", False),
             uri=item["uri"],
+            canEdit=canEdit,
             external_url=item.get("external_urls", {}).get("spotify")
         ))
     return playlists
@@ -247,6 +246,15 @@ def find_playlist_by_name(uid: str, name: str, onlyModifiableByUser: bool = Fals
         if name_lower in playlist.name.lower():
             return playlist
     
+    return None
+
+
+def find_playlist_by_id(uid: str, id: str, onlyModifiableByUser: bool = False) -> Optional[SpotifyPlaylist]:
+    """Find a playlist by ID."""
+    playlists = get_user_playlists(uid, limit=50, onlyModifiableByUser=onlyModifiableByUser)
+    for playlist in playlists:
+        if playlist.id == id:
+            return playlist
     return None
 
 
@@ -602,13 +610,16 @@ async def tool_get_playlists(request: Request):
         if not playlists:
             return ChatToolResponse(result="You don't have any playlists yet.")
         
-        # Format results
-        results = []
-        for i, playlist in enumerate(playlists, 1):
-            visibility = "🌐" if playlist.public else "🔒"
-            results.append(f"{i}. {visibility} **{playlist.name}** ({playlist.tracks_total} tracks)")
-        
-        return ChatToolResponse(result=f"📋 Your playlists:\n\n" + "\n".join(results))
+        return ChatToolResponse(result=str([{
+                "id": playlist.id,
+                "name": playlist.name,
+                "description": playlist.description,
+                "owner": playlist.owner,
+                "tracks_total": playlist.tracks_total,
+                "public": playlist.public,
+                "canEdit": playlist.canEdit,
+                "external_url": playlist.external_url
+            } for playlist in playlists]))
     
     except Exception as e:
         return ChatToolResponse(error=f"Failed to get playlists: {str(e)}")
@@ -770,6 +781,62 @@ async def tool_play_song(request: Request):
         return ChatToolResponse(error=f"Failed to play song: {str(e)}")
 
 
+@app.post("/tools/play_playlist", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_play_playlist(request: Request):
+    """
+    Play a specific playlist on Spotify.
+    Chat tool for Omi - finds and plays a playlist.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        playlist_id = body.get("playlist_id")
+        playlist_name = body.get("playlist_name")
+        
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+        
+        if not playlist_id and not playlist_name:
+            return ChatToolResponse(error="Playlist ID or name is required")
+
+        # Check authentication
+        if not get_spotify_tokens(uid):
+            return ChatToolResponse(error="Please connect your Spotify account first in the app settings.")
+
+        target_playlist = None
+
+        if playlist_id:
+            print(f"🎵 Playlist ID provided: {playlist_id}")
+            target_playlist = find_playlist_by_id(uid, playlist_id)
+            if not target_playlist:
+                return ChatToolResponse(error=f"Could not find playlist with ID: {playlist_id}")
+        elif playlist_name:
+            print(f"🎵 Playlist name provided: {playlist_name}")
+            target_playlist = find_playlist_by_name(uid, playlist_name)
+            if not target_playlist:
+                return ChatToolResponse(error=f"Could not find playlist with name: {playlist_name}")
+
+        # Play the playlist
+        result = spotify_api_request(
+            uid, "PUT", "/me/player/play",
+            json_data={"context_uri": target_playlist.uri}
+        )
+        
+        if "error" in result:
+            if "No active device" in str(result.get("error", "")):
+                return ChatToolResponse(
+                    error="No active Spotify device found. Please open Spotify on one of your devices first."
+                )
+            return ChatToolResponse(error=f"Failed to play: {result['error']}")
+        
+        return ChatToolResponse(
+            result=f"▶️ Now playing: **{target_playlist.name}**"
+        )
+    
+    except Exception as e:
+        return ChatToolResponse(error=f"Failed to play playlist: {str(e)}")
+
+
 @app.post("/tools/get_recommendations", tags=["chat_tools"], response_model=ChatToolResponse)
 async def tool_get_recommendations(request: Request):
     """
@@ -913,7 +980,7 @@ async def get_omi_tools_manifest():
             },
             {
                 "name": "get_playlists",
-                "description": "Get the user's Spotify playlists. Use this when the user wants to see their playlists or check what playlists they have.",
+                "description": "Get the user's Spotify playlists. Use this when the user wants to see their playlists or check what playlists they have (can return playlist ids).",
                 "endpoint": "/tools/get_playlists",
                 "method": "POST",
                 "parameters": {
@@ -977,6 +1044,27 @@ async def get_omi_tools_manifest():
                 },
                 "auth_required": True,
                 "status_message": "Playing song..."
+            },
+            {
+                "name": "play_playlist",
+                "description": "Play a specific playlist on Spotify. Use this when the user wants to play a particular playlist. You can provide either the playlist ID or the playlist name.",
+                "endpoint": "/tools/play_playlist",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "playlist_id": {
+                            "type": "string",
+                            "description": "ID of the playlist to play"
+                        },
+                        "playlist_name": {
+                            "type": "string",
+                            "description": "Name of the playlist to play"
+                        }
+                    },
+                    "required": []
+                },
+                "auth_required": True,
+                "status_message": "Playing playlist..."
             },
             {
                 "name": "get_recommendations",
