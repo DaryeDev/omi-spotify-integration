@@ -209,14 +209,12 @@ def get_user_playlists(uid: str, limit: int = 20, onlyModifiableByUser: bool = F
     if "error" in result:
         return []
 
-    user_profile = None
-    if onlyModifiableByUser:
-        # Get current user's Spotify profile info
-        user_profile = spotify_api_request(uid, "GET", "/me")
+    user_profile = spotify_api_request(uid, "GET", "/me")
     
     playlists = []
     for item in result.get("items", []):
-        if onlyModifiableByUser and (item["owner"]["id"] != user_profile["id"] and item["collaborative"] == False):
+        canEdit = item["owner"]["id"] == user_profile["id"] or item["collaborative"] == True
+        if onlyModifiableByUser and not canEdit:
             continue
 
         playlists.append(SpotifyPlaylist(
@@ -227,6 +225,7 @@ def get_user_playlists(uid: str, limit: int = 20, onlyModifiableByUser: bool = F
             tracks_total=item["tracks"]["total"],
             public=item.get("public", False),
             uri=item["uri"],
+            canEdit=canEdit,
             external_url=item.get("external_urls", {}).get("spotify")
         ))
     return playlists
@@ -611,13 +610,16 @@ async def tool_get_playlists(request: Request):
         if not playlists:
             return ChatToolResponse(result="You don't have any playlists yet.")
         
-        # Format results
-        results = []
-        for i, playlist in enumerate(playlists, 1):
-            visibility = "🌐" if playlist.public else "🔒"
-            results.append(f"{i}. {visibility} **{playlist.name}** ({playlist.tracks_total} tracks)")
-        
-        return ChatToolResponse(result=f"📋 Your playlists:\n\n" + "\n".join(results))
+        return ChatToolResponse(result=str([{
+                "id": playlist.id,
+                "name": playlist.name,
+                "description": playlist.description,
+                "owner": playlist.owner,
+                "tracks_total": playlist.tracks_total,
+                "public": playlist.public,
+                "canEdit": playlist.canEdit,
+                "external_url": playlist.external_url
+            } for playlist in playlists]))
     
     except Exception as e:
         return ChatToolResponse(error=f"Failed to get playlists: {str(e)}")
@@ -970,7 +972,7 @@ async def get_omi_tools_manifest():
             },
             {
                 "name": "get_playlists",
-                "description": "Get the user's Spotify playlists. Use this when the user wants to see their playlists or check what playlists they have.",
+                "description": "Get the user's Spotify playlists. Use this when the user wants to see their playlists or check what playlists they have (can return playlist ids).",
                 "endpoint": "/tools/get_playlists",
                 "method": "POST",
                 "parameters": {

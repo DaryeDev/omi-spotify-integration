@@ -27,6 +27,7 @@ class SpotifyPlaylist(BaseModel):
     tracks_total: int
     public: bool
     uri: str
+    canEdit: bool
     external_url: Optional[str] = None
 
 
