@@ -788,7 +788,7 @@ async def tool_play_playlist(request: Request):
     try:
         body = await request.json()
         uid = body.get("uid")
-        playlist_id = body.get("playlist_id", "")
+        playlist_id = body.get("playlist_id", None)
         
         if not uid:
             return ChatToolResponse(error="User ID is required")
@@ -801,10 +801,10 @@ async def tool_play_playlist(request: Request):
             return ChatToolResponse(error="Please connect your Spotify account first in the app settings.")
 
         playlist = find_playlist_by_id(uid, playlist_id)
+        print(f"🎵 Playlist ID: {playlist_id}")
+        print(f"🎵 Playlist: {playlist}")
         if not playlist:
             return ChatToolResponse(error=f"Could not find playlist: {playlist_id}")
-
-        print(f"🎵 Playlist: {playlist}")
 
         # Play the playlist
         result = spotify_api_request(
