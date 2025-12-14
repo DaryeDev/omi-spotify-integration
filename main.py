@@ -199,7 +199,7 @@ def search_tracks(uid: str, query: str, limit: int = 5) -> List[SpotifyTrack]:
     return tracks
 
 
-def get_user_playlists(uid: str, limit: int = 20) -> List[SpotifyPlaylist]:
+def get_user_playlists(uid: str, limit: int = 20, onlyModifiableByUser: bool = False) -> List[SpotifyPlaylist]:
     """Get user's playlists."""
     result = spotify_api_request(
         uid, "GET", "/me/playlists",
@@ -208,9 +208,17 @@ def get_user_playlists(uid: str, limit: int = 20) -> List[SpotifyPlaylist]:
     
     if "error" in result:
         return []
+
+    user_profile = None
+    if onlyModifiableByUser:
+        # Get current user's Spotify profile info
+        user_profile = spotify_api_request(uid, "GET", "/me")
     
     playlists = []
     for item in result.get("items", []):
+        if onlyModifiableByUser and (item["owner"]["id"] != user_profile["id"] and item["collaborative"] == False):
+            continue
+
         playlists.append(SpotifyPlaylist(
             id=item["id"],
             name=item["name"],
@@ -224,9 +232,9 @@ def get_user_playlists(uid: str, limit: int = 20) -> List[SpotifyPlaylist]:
     return playlists
 
 
-def find_playlist_by_name(uid: str, name: str) -> Optional[SpotifyPlaylist]:
+def find_playlist_by_name(uid: str, name: str, onlyModifiableByUser: bool = False) -> Optional[SpotifyPlaylist]:
     """Find a playlist by name (case-insensitive partial match)."""
-    playlists = get_user_playlists(uid, limit=50)
+    playlists = get_user_playlists(uid, limit=50, onlyModifiableByUser=onlyModifiableByUser)
     name_lower = name.lower()
     
     # First try exact match
@@ -269,7 +277,7 @@ async def home(request: Request, uid: Optional[str] = None):
         if "error" not in profile_result:
             user_profile = profile_result
         
-        playlists = get_user_playlists(uid, limit=50)
+        playlists = get_user_playlists(uid, limit=50, onlyModifiableByUser=True)
         default_playlist = get_default_playlist(uid)
     
     return templates.TemplateResponse("setup.html", {
@@ -478,9 +486,9 @@ async def tool_add_to_playlist(request: Request):
             )
         elif playlist_name:
             # Find playlist by name
-            target_playlist = find_playlist_by_name(uid, playlist_name)
+            target_playlist = find_playlist_by_name(uid, playlist_name, onlyModifiableByUser=True)
             if not target_playlist:
-                return ChatToolResponse(error=f"Could not find playlist: {playlist_name}")
+                return ChatToolResponse(error=f"Could not find playlist (editable by you): {playlist_name}")
         else:
             # Use default playlist
             default = get_default_playlist(uid)
