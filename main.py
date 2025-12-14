@@ -790,28 +790,36 @@ async def tool_play_playlist(request: Request):
     try:
         body = await request.json()
         uid = body.get("uid")
-        playlist_id = body.get("playlist_id", None)
+        playlist_id = body.get("playlist_id")
+        playlist_name = body.get("playlist_name")
         
         if not uid:
             return ChatToolResponse(error="User ID is required")
         
-        if not playlist_id:
-            return ChatToolResponse(error="Playlist ID is required")
+        if not playlist_id and not playlist_name:
+            return ChatToolResponse(error="Playlist ID or name is required")
 
         # Check authentication
         if not get_spotify_tokens(uid):
             return ChatToolResponse(error="Please connect your Spotify account first in the app settings.")
 
-        playlist = find_playlist_by_id(uid, playlist_id)
-        print(f"🎵 Playlist ID: {playlist_id}")
-        print(f"🎵 Playlist: {playlist}")
-        if not playlist:
-            return ChatToolResponse(error=f"Could not find playlist: {playlist_id}")
+        target_playlist = None
+
+        if playlist_id:
+            print(f"🎵 Playlist ID provided: {playlist_id}")
+            target_playlist = find_playlist_by_id(uid, playlist_id)
+            if not target_playlist:
+                return ChatToolResponse(error=f"Could not find playlist with ID: {playlist_id}")
+        elif playlist_name:
+            print(f"🎵 Playlist name provided: {playlist_name}")
+            target_playlist = find_playlist_by_name(uid, playlist_name)
+            if not target_playlist:
+                return ChatToolResponse(error=f"Could not find playlist with name: {playlist_name}")
 
         # Play the playlist
         result = spotify_api_request(
             uid, "PUT", "/me/player/play",
-            json_data={"uris": [f"spotify:playlist:{playlist_id}"]}
+            json_data={"uris": [target_playlist.uri]}
         )
         
         if "error" in result:
@@ -822,7 +830,7 @@ async def tool_play_playlist(request: Request):
             return ChatToolResponse(error=f"Failed to play: {result['error']}")
         
         return ChatToolResponse(
-            result=f"▶️ Now playing: **{playlist.name}**"
+            result=f"▶️ Now playing: **{target_playlist.name}**"
         )
     
     except Exception as e:
@@ -1039,7 +1047,7 @@ async def get_omi_tools_manifest():
             },
             {
                 "name": "play_playlist",
-                "description": "Play a specific playlist on Spotify. Use this when the user wants to play a particular playlist. Get the playlist ID from the get_playlists tool.",
+                "description": "Play a specific playlist on Spotify. Use this when the user wants to play a particular playlist. You can provide either the playlist ID or the playlist name.",
                 "endpoint": "/tools/play_playlist",
                 "method": "POST",
                 "parameters": {
@@ -1048,8 +1056,12 @@ async def get_omi_tools_manifest():
                             "type": "string",
                             "description": "ID of the playlist to play"
                         },
+                        "playlist_name": {
+                            "type": "string",
+                            "description": "Name of the playlist to play"
+                        }
                     },
-                    "required": ["playlist_id"]
+                    "required": []
                 },
                 "auth_required": True,
                 "status_message": "Playing playlist..."
