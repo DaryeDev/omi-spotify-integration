@@ -819,7 +819,7 @@ async def tool_play_playlist(request: Request):
         # Play the playlist
         result = spotify_api_request(
             uid, "PUT", "/me/player/play",
-            json_data={"uris": [target_playlist.uri]}
+            json_data={"context_uri": target_playlist.uri}
         )
         
         if "error" in result:
