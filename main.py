@@ -803,7 +803,9 @@ async def tool_play_playlist(request: Request):
         playlist = find_playlist_by_id(uid, playlist_id)
         if not playlist:
             return ChatToolResponse(error=f"Could not find playlist: {playlist_id}")
-        
+
+        print(f"🎵 Playlist: {playlist}")
+
         # Play the playlist
         result = spotify_api_request(
             uid, "PUT", "/me/player/play",
